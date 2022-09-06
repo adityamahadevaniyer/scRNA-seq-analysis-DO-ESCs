@@ -1,0 +1,286 @@
+---
+title: "scRNA-seqanalysis-DOdata"
+author: "Aditya Mahadevan Iyer"
+date: "9/1/2022"
+output: html_document
+---
+
+We obtained the scRNA-seq data from DO EBs using multi-seq technology. I will be using kallisto bustools for the analysis as the process is faster. Before I ran the actual analysis, I need to install all the packages. Some of them have been developed on Python
+```{r}
+#installing all the packages needed for the analysis
+#BiocManager::install("DropletUtils") #unable to install this
+devtools::install_github("letaylor/bioutils")
+#BiocManager::install("multtest")
+#install.packages('Seurat')
+#devtools::install_github("thomasp85/scico")
+#devtools::install_github("LKremer/ggpointdensity")
+#system("pip3 install kb-python --ignore-installed certifi") #after downloading Anaconda #after downloading Anaconda
+
+```
+I was running Rcloud on Sumner for the first, so had to install the packages. 
+```{r}
+#load all the packages needed for the analysis
+#library(DropletUtils) #unable to install through Bioconductor
+library(Matrix)
+library(tidyverse)
+library(Seurat)
+library(ggpointdensity)
+library(scico)
+library(scales)
+library(dplyr)
+library(irlba)
+library(ggrepel)
+library(patchwork)
+library(tidyselect)
+theme_set(theme_bw() +
+            theme(axis.text = element_text(size = 12),
+                  axis.title = element_text(size = 14),
+                  legend.title = element_text(size = 14)))
+```
+
+
+```{r}
+#Testing the kb python commands- paste it in the console
+system("kb count --help") #to know the commands
+system("kb --list") #to know the list of technologies supported
+
+#Download a prebuilt kallisto index for mouse and the transcript to gene file.
+system("kb ref -d mouse -i index.idx -g t2g.txt -f1 transcriptome.fasta")
+```
+
+The DO scRNA-seq fastq files were generated using the ___ 10X technology. system("kb --list") provides a list of 10X technologies supported by kallisto bustools. Specifying the technology using the kb count -x helps in downloading the whitelist and barcode information directly from their website so that we don't have to do it here.
+
+```{r}
+#kb python command to process the first dataset SC2200202_EBs-LMO
+system("kb count -i ./scripts/index.idx -g ./scripts/t2g.txt -x 10xv3 --overwrite -t 2 -o ./SC2200202 ./fastq/SC2200202_EBs-LMO/SC2200202_GT22-08295_GTCCCATCAA-GTCACGTTCG_S4_L001_R1_001.fastq.gz ./fastq/SC2200202_EBs-LMO/SC2200202_GT22-08295_GTCCCATCAA-GTCACGTTCG_S4_L001_R2_001.fastq.gz", intern = TRUE)
+```
+
+
+```{r}
+#Processing the second dataset SC2200203_EBs-LMO using kallisto-bustools
+
+```
+
+
+```{r}
+# Read in the count matrix that was output by `kb`.
+mat1 <- readMM("SC2200202/counts_unfiltered/cells_x_genes.mtx")
+mat2 <- readMM("SC2200203/counts_unfiltered/cells_x_genes.mtx")
+
+# Convert to dgCMatrix, which is a compressed, sparse matrix format
+mat1 <- as(mat1, "dgCMatrix")
+mat2 <- as(mat2, "dgCMatrix")
+
+dim(mat1)
+dim(mat2)
+```
+
+```{r}
+# Perform PCA
+pca_res1 <- prcomp_irlba(mat1, n = 2) # scales and centers by default
+pca_x1 <- as.data.frame(pca_res1$x)
+
+pca_res2 <- prcomp_irlba(mat2, n = 2) # scales and centers by default
+pca_x2 <- as.data.frame(pca_res2$x)
+
+# Plot the cells in the 2D PCA projection
+ggplot(pca_x1, aes(PC1, PC2)) +
+  geom_point(alpha = 0.1, size = 0.5)
+
+ggplot(pca_x2, aes(PC1, PC2)) +
+  geom_point(alpha = 0.1, size = 0.5)
+```
+While the PCA plot shows the overall structure of the data, a visualization highlighting the density of points reveals a large number of droplets represented in the lower left corner.
+```{r}
+ggplot(pca_x1, aes(PC1, PC2)) +
+  geom_bin2d(bins = 50) +
+  scale_fill_scico(palette = "devon", direction = -1, end = 0.95)
+
+ggplot(pca_x2, aes(PC1, PC2)) +
+  geom_bin2d(bins = 50) +
+  scale_fill_scico(palette = "devon", direction = -1, end = 0.95)
+```
+
+Test for library saturation
+```{r}
+df2 <- tibble(nCount = rowSums(mat1),
+              nGene = rowSums(mat1 > 0))
+
+df3 <- tibble(nCount = rowSums(mat2),
+              nGene = rowSums(mat2 > 0))
+
+ggplot(df2, aes(nCount, nGene)) +
+  geom_bin2d(bins = 50) +
+  scale_fill_scico(palette = "devon", direction = -1, end = 0.95) +
+  scale_x_log10() + scale_y_log10() + annotation_logticks() +
+  labs(x = "Total UMI counts", y = "Number of genes detected")
+
+ggplot(df3, aes(nCount, nGene)) +
+  geom_bin2d(bins = 50) +
+  scale_fill_scico(palette = "devon", direction = -1, end = 0.95) +
+  scale_x_log10() + scale_y_log10() + annotation_logticks() +
+  labs(x = "Total UMI counts", y = "Number of genes detected")
+```
+
+```{r}
+# Create the knee plot for SC2200202
+tot_counts <- rowSums(mat1)
+df1 <- tibble(total = tot_counts,
+             rank = row_number(desc(total))) %>%
+      distinct() %>%
+      arrange(rank)
+
+options(repr.plot.width=9, repr.plot.height=6)
+ggplot(df, aes(total, rank)) +
+  geom_path() +
+  scale_x_log10() + scale_y_log10() + annotation_logticks() +
+  labs(y = "Barcode rank", x = "Total UMI count") +
+  ggtitle("Knee plot for SC2200202")
+```
+
+```{r}
+# Create the knee plot for the SC2200203 sample
+tot_counts <- rowSums(mat2)
+df2 <- tibble(total = tot_counts,
+             rank = row_number(desc(total))) %>%
+      distinct() %>%
+      arrange(rank)
+
+options(repr.plot.width=9, repr.plot.height=6)
+ggplot(df, aes(total, rank)) +
+  geom_path() +
+  scale_x_log10() + scale_y_log10() + annotation_logticks() +
+  labs(y = "Barcode rank", x = "Total UMI count") +
+  ggtitle("Knee plot for SC2200203")
+```
+
+```{r}
+#custom functions from Pachter lab to draw inflection point and remove empty droplets
+get_knee_df <- function(mat) {
+  tibble(total = colSums(mat),
+         rank = row_number(desc(total))) %>%
+    distinct() %>%
+    filter(total > 0) %>% 
+    arrange(rank)
+}
+
+get_inflection <- function(df, lower = 100) {
+  df_fit <- df %>% 
+    filter(total > lower) %>% 
+    transmute(log_total = log10(total),
+              log_rank = log10(rank))
+  d1n <- diff(df_fit$log_total)/diff(df_fit$log_rank)
+  right.edge <- which.min(d1n)
+  10^(df_fit$log_total[right.edge])
+}
+
+knee_plot <- function(df, inflection) {
+  annot <- tibble(inflection = inflection,
+                  rank_cutoff = max(df$rank[df$total > inflection]))
+  ggplot(df, aes(total, rank)) +
+    geom_path() +
+    geom_vline(aes(xintercept = inflection), data = annot, linetype = 2, color = "gray40") +
+    geom_hline(aes(yintercept = rank_cutoff), data = annot, linetype = 2, color = "gray40") +
+    geom_text_repel(aes(inflection, rank_cutoff, 
+                        label = paste(rank_cutoff, "'cells'")), size = 5,
+                    data = annot) +
+    scale_x_log10() +
+    scale_y_log10() +
+    labs(y = "Rank", x = "Total UMIs") +
+    annotation_logticks()
+}
+```
+
+
+```{r}
+#applying custom functions for SC2200202
+options(repr.plot.width=9, repr.plot.height=6)
+df3 <- get_knee_df(mat1)
+infl <- get_inflection(df1, lower = 400)
+knee_plot(df, infl)
+```
+
+```{r}
+#applying custom functions for SC2200203
+options(repr.plot.width=9, repr.plot.height=6)
+df4 <- get_knee_df(mat2)
+infl <- get_inflection(df2, lower = 400)
+knee_plot(df, infl)
+```
+Barcodes with total counts greater than the total count at the inflection point are kept as "real" cells. Then again, genes not detected in any "real" cells are removed. How many barcodes and genes are there left?
+
+```{r}
+mat_filtered1 <- mat1[, colSums(mat1) > infl]
+mat_filtered1 <- mat_filtered[rowSums(mat_filtered1) > 0, ]
+dim(mat_filtered1)
+
+mat_filtered2 <- mat2[, colSums(mat2) > infl]
+mat_filtered2 <- mat_filtered2[rowSums(mat_filtered2) > 0, ]
+dim(mat_filtered1)
+```
+
+```{r}
+#The proportion of UMIs that are real cells
+sum(mat_filtered1)/sum(mat1)
+sum(mat_filtered2)/sum(mat2)
+```
+
+```{r}
+gns <- read_tsv("scripts/t2g.txt", col_names = c("transcript", "gene", "symbol")) %>% 
+  select(-transcript) %>% 
+  distinct()
+rownames(mat_filtered1) <- gns$symbol[match(rownames(mat_filtered1), gns$gene)]
+rownames(mat_filtered2) <- gns$symbol[match(rownames(mat_filtered2), gns$gene)]
+```
+
+
+```{r}
+#We can now create Seurat objects with the filtered matrix
+seu1 <- CreateSeuratObject(mat_filtered1)
+seu2 <- CreateSeuratObject(mat_filtered2)
+```
+Function to plot the scatter plot side by side along with the density plot
+```{r}
+plot_scatter_density <- function(seu, features, size = 0.5, alpha = 0.1,
+                                 bins = 100, log = c("xy", "x", "y", "none"),
+                                 xlab = NULL, ylab = NULL) {
+  log <- match.arg(log)
+  features <- intersect(features, names(seu@meta.data))
+  if (length(features) < 2) {
+    stop("Need 2 features to plot.")
+  }
+  if (length(features) > 2) {
+    features <- features[1:2]
+    warning("The first two elements of features are used.")
+  }
+  p <- ggplot(seu@meta.data, aes_string(features[1], features[2]))
+  if (!is.null(xlab)) p <- p + xlab(xlab)
+  if (!is.null(ylab)) p <- p + ylab(ylab)
+  p <- switch(
+    log,
+    xy = p + scale_x_log10() + scale_y_log10() + annotation_logticks(),
+    x = p + scale_x_log10() + annotation_logticks(sides = "b"),
+    y = p + scale_y_log10() + annotation_logticks(sides = "l"),
+    none = p
+  )
+  p1 <- p +
+  geom_point(size = size, alpha = alpha)
+  p2 <- p +
+    geom_bin2d(bins = bins) +
+    scale_fill_distiller(palette = "Blues", direction = 1)
+  p1 + p2
+}
+```
+
+Checking for library saturation
+```{r}
+ncount_lab <- "Number of UMI per cell"
+plot_scatter_density(seu1, c("nCount_RNA", "nFeature_RNA"),
+                     xlab = ncount_lab, 
+                     ylab = "Number of genes per cell")
+plot_scatter_density(seu2, c("nCount_RNA", "nFeature_RNA"),
+                     xlab = ncount_lab, 
+                     ylab = "Number of genes per cell")
+```
+
+
